@@ -1,0 +1,10 @@
+Outline for the talk :
+What is RStudio ?
+Capabilities
+RStudio support for Teradata
+examples of using RStudio with Teradata
+
+tdplyr - use tdplyr with RStudio
+Using execR with dplyr
+Extending dplyr for your own functions.
+shiny app

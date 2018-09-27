@@ -1,0 +1,290 @@
+---
+title: "Databases and R"
+output: html_notebook
+---
+
+## Connecting to a database
+
+```{r}
+library(knitr)
+```
+
+```{r}
+library(odbc)
+
+odbcListDrivers()
+sort(unique(odbcListDrivers()[[1]]))
+```
+
+http://db.rstudio.com/best-practices/managing-credentials/#integrated-security-without-dsn
+
+http://db.rstudio.com/databases/microsoft-sql-server/
+
+http://db.rstudio.com/best-practices/managing-credentials/#integrated-security-with-dsn
+
+```{r}
+library(DBI)
+con <- dbConnect(odbc(), "teradata")
+```
+
+
+## Using DBI
+
+http://db.rstudio.com/dbi/
+
+```{r}
+dbGetQuery(con, "select dest, count(*) from flights group by dest")
+```
+
+```{sql, connection = con}
+select "origin", count(*) from flights group by "origin"
+```
+
+
+## dplyr
+
+http://db.rstudio.com/dplyr/
+
+```{r}
+library(dplyr)
+library(dbplyr)
+
+tbl(con, "flights")
+```
+
+```{r}
+db_flights <- tbl(con, "flights")
+```
+
+```{r}
+db_flights %>%
+  head()
+```
+
+### Under the hood
+
+```{r}
+db_flights %>%
+  head() %>%
+  show_query()
+```
+
+```{r}
+sql_render(head(db_flights), con = simulate_mysql())
+```
+
+Translations available in `dbplyr`:
+
+- Microsoft SQL Server
+- Oracle
+- Teradata 
+- Amazon Redshift 
+- MS Access 
+- Apache Hive
+- Apache Impala
+- PostgreSQL
+- MariaDB (MySQL)
+- SQLite
+
+BigQuery - Available in `bigrquery` - http://db.rstudio.com/databases/big-query/
+MonetDB - Available in MonetDBLite - http://db.rstudio.com/databases/monetdb/
+
+
+### More dplyr
+
+```{r}
+db_flights %>%
+  group_by(year) %>%
+  tally() 
+```
+
+Create summarizations
+
+```{r}
+db_flights %>% 
+  group_by(month) %>%
+  summarise(
+    no_flights = n(),
+    avg_dep_delay = mean(dep_delay, na.rm = TRUE),
+    avg_arr_delay = mean(arr_delay, na.rm = TRUE)
+  )
+```
+
+Join tables 
+```{r}
+db_airports <- tbl(con, "airports")
+
+db_joined <- db_flights %>%
+  inner_join(db_airports, by = c("origin" = "faa")) 
+
+db_joined
+```
+
+Top 10 busiest airports.  Take advantage of `dplyr` lazy evaluation
+```{r}
+db_joined %>%
+  group_by(name) %>%
+  tally() %>%
+  arrange(desc(n)) %>%
+  head(10)
+```
+
+## Visualization
+
+http://db.rstudio.com/best-practices/visualization/
+
+```{r}
+library(ggplot2) 
+
+t <- db_joined %>%
+  group_by(name) %>%
+  tally() %>%
+  arrange(desc(n)) %>%
+  head(10) %>%
+  collect() 
+
+  ggplot(t) +
+  geom_col(aes(x = name, y = n)) +
+  coord_flip()
+  
+```
+
+```{r}
+db_joined  %>%
+  group_by(lon, lat) %>%
+  tally() %>%
+  select(n, lon, lat) %>%
+  collect() %>%
+  ggplot() +
+    geom_point(aes(x = lon, y = lat, size = n, color = n), alpha = 0.3)
+```
+
+## Use dbplot
+
+http://db.rstudio.com/dbplot/
+
+```{r}
+library(dbplot)
+
+db_flights %>%
+  filter(year == 2006) %>%
+  dbplot_line(month , mean(arr_delay, na.rm = TRUE))
+```
+
+```{r}
+db_bin(my_var)
+```
+
+```{r}
+db_flights %>%
+  filter(!is.na(arr_delay)) %>%
+  dbplot_histogram(arr_delay)
+```
+
+```{r}
+db_flights %>%
+  filter(arr_delay < 100, arr_delay > (-100)) %>%
+  dbplot_histogram(arr_delay)
+```
+
+
+
+
+```{r}
+db_joined %>%
+  filter(cancelled == 0) %>%
+  dbplot_raster(dep_delay, arr_delay)
+nycflights13::flights
+```
+
+```{r}
+db_flights %>%
+  filter(dep_delay < -1000) %>%
+  head(10)
+```
+
+Use View()
+```{r, eval = FALSE}
+db_flights %>%
+  filter(dep_delay < -1000) %>%
+  head(100) %>%
+  collect() %>%
+  View("Over1K")
+```
+
+## Sampling
+
+```{r}
+set.seed(100)
+rows <- db_flights %>%
+  filter(cancelled == 0 , year == 2006) %>%
+  tally() %>%
+  pull()
+
+sampling <- sample(1:rows, 600)
+```
+
+```{r, eval = FALSE}
+flights_sample <- db_flights %>%
+  filter(cancelled == 0 , year == 2006) %>%
+  arrange(dayofmonth) %>%
+  mutate(row = row_number()) %>%
+  filter(row %in% sampling) %>%
+  collect()
+```
+
+```{r}
+flights_sample <- db_flights %>%
+  filter(cancelled == 0 , year == 2006) %>%
+  mutate(row = row_number(order = dayofmonth)) %>%
+  filter(row %in% sampling) %>%
+  collect()
+```
+
+```{r}
+flights_sample %>%
+  filter(arr_delay < 100, arr_delay > (-100)) %>%
+  dbplot_histogram(arr_delay)
+```
+
+## Modeling
+
+```{r}
+model <- flights_sample %>%
+  filter(arr_delay < 100, arr_delay > (-100)) %>%
+  mutate(dayofmonth = paste0("d", dayofmonth)) %>%
+  lm(arr_delay ~  crsdeptime + crsarrtime,  data = .)
+
+summary(model)
+```
+
+## tidypredict
+
+```{r}
+library(tidypredict)
+
+library(DBI)
+
+?dbWriteTable
+
+tidypredict_sql(model, con)
+```
+
+```{r}
+db_flights %>%
+  filter(arr_delay < 100, arr_delay > (-100), year == 2007) %>%
+  tidypredict_to_column(model) %>%
+  select(fit, arr_delay)
+```
+
+```{r}
+db_flights %>%
+  filter(arr_delay < 100, arr_delay > (-100), year == 2007) %>%
+  tidypredict_to_column(model) %>%
+  mutate(diff = fit - arr_delay) %>%
+  dbplot_histogram(diff)
+
+db_flights %>%
+  filter(date >= unix_time_stamp(now()))
+```
+

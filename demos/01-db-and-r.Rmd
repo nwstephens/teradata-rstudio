@@ -1,0 +1,330 @@
+---
+title: "Databases and R"
+output:
+  html_notebook:
+    toc: true
+    toc_float: true
+---
+
+## Connecting to a database
+
+```{r, eval=FALSE}
+library(odbc)
+library(DBI)
+con <- dbConnect(odbc(), "teradata")
+```
+
+## Using DBI
+
+* http://db.rstudio.com/dbi/
+
+```{r}
+dbGetQuery(con, "select dest, count(*) from flights group by dest")
+```
+
+```{sql, connection = con}
+select "origin", count(*) from flights group by "origin"
+```
+
+
+## dplyr
+
+http://db.rstudio.com/dplyr/
+
+```{r}
+library(dplyr)
+library(dbplyr)
+tbl(con, "flights")
+```
+
+```{r}
+db_flights <- tbl(con, "flights")
+```
+
+```{r}
+db_flights %>%
+  head()
+```
+
+### Under the hood
+
+```{r}
+db_flights %>%
+  head() %>%
+  show_query()
+```
+
+```{r}
+cat("\n== Teradata (head --> TOP): ==\n\n")
+sql_render(head(db_flights))
+cat("\n== MySQL (head --> LIMIT): ==\n\n")
+sql_render(head(db_flights), con = simulate_mysql())
+cat("\n== Teradata (log10 --> LOG): ==\n\n")
+sql_render(summarize(db_flights, x = log10(dep_delay)))
+cat("\n== MySQL (log10 --> LOG10): ==\n\n")
+sql_render(summarize(db_flights, x = log10(dep_delay)), con = simulate_mysql())
+```
+
+Translations available in `dbplyr`:
+
+- Microsoft SQL Server
+- Oracle
+- Teradata 
+- Amazon Redshift 
+- MS Access 
+- Apache Hive
+- Apache Impala
+- PostgreSQL
+- MariaDB (MySQL)
+- SQLite
+
+BigQuery - Available in `bigrquery` - http://db.rstudio.com/databases/big-query/
+MonetDB - Available in MonetDBLite - http://db.rstudio.com/databases/monetdb/
+
+
+### More dplyr
+
+```{r}
+db_flights %>%
+  group_by(year) %>%
+  tally() 
+```
+
+Create summarizations
+
+```{r}
+db_flights %>% 
+  group_by(month) %>%
+  summarise(
+    no_flights = n(),
+    avg_dep_delay = mean(dep_delay, na.rm = TRUE),
+    avg_arr_delay = mean(arr_delay, na.rm = TRUE)
+  )
+```
+
+Join tables 
+
+```{r}
+db_airports <- tbl(con, "airports")
+
+db_joined <- db_flights %>%
+  inner_join(db_airports, by = c("origin" = "faa")) 
+
+db_joined
+```
+
+### Lazy
+
+Top 10 busiest airports.  Take advantage of `dplyr` lazy evaluation
+```{r}
+x <- db_joined %>%
+  group_by(name) %>%
+  tally() %>%
+  arrange(desc(n))
+
+head(x, 10)
+```
+
+### Collecting
+
+dplyr syntax makes it easy to collect at any point in the query. One tool and one syntax for many data sources.
+
+```{r}
+db_airports <- tbl(con, "airports")
+
+local <- db_flights %>%
+  filter(year == 2013) %>%
+  inner_join(db_airports, by = c("origin" = "faa")) %>%
+  inner_join(db_airports, by = c("dest" = "faa"), suffix = c(".orig",".dest")) %>%
+  group_by(name.orig, name.dest) %>%
+  summarize(dep_delay = mean(dep_delay), arr_delay = mean(arr_delay), distance = mean(distance)) %>%
+collect()
+local %>%
+  filter(dep_delay > 15 & arr_delay > 15) %>%
+  mutate(x = row_number(distance)) %>%
+  filter(row_number(distance) == 1) %>%
+  select(-x) %>%
+  arrange(desc(distance))
+```
+
+
+## Visualization
+
+### ggplot
+
+http://db.rstudio.com/best-practices/visualization/
+
+```{r}
+library(ggplot2) 
+
+gg1 <- local %>%
+  mutate(dist = sqrt(distance), orig = name.orig, dest = name.dest) %>%
+  mutate_if(is.numeric, round, 0) %>%
+  ggplot() +
+  geom_point(aes(dep_delay, arr_delay, size = dist, orig = orig, dest = dest), alpha = 0.3, col = "blue")
+gg1 
+```
+
+### plotly
+
+```{r}
+library(plotly)
+ggplotly(gg1)
+```
+
+### dbplot
+
+`dbplot` makes it easier to push plot data from databases.  It performs the calculations in the database, and plots the results. Most plots can easily be created with a combination of `dplyr` and `ggplot2`
+
+https://github.com/edgararuiz/dbplot
+
+#### Line plot
+
+```{r}
+library(dbplot)
+library(dbplyr)
+library(odbc)
+library(dplyr)
+
+db_flights %>%
+  filter(year == 2013) %>%
+  #dbplot_line(month)
+  dbplot_line(month , mean(arr_delay, na.rm = TRUE))
+```
+
+#### Histogram
+
+`dbplot` is most helpful for Histograms and Raster plots because it uses `tidyeval` to create the formula. The `db_bin()` function creates an un-evaluated formula.
+
+```{r}
+db_bin(dep_time, binwidth = 300)
+```
+
+You can place the formula in `dplyr`, and use `!!` to force its evaluation, thus running the calculation.  `dbplyr` will take the formula and translated it into SQL.
+
+```{r, eval = FALSE}
+db_flights %>%
+  mutate(bins = !! db_bin(dep_time, binwidth = 300))
+```
+
+In `dbplot`, there are helper functions to create the Histogram with one command.
+
+```{r}
+db_flights %>%
+  filter(arr_delay > 15) %>%
+  mutate(arr_delay = log10(arr_delay)) %>%
+  dbplot_histogram(arr_delay)
+
+db_flights %>%
+  filter(dep_delay > 15) %>%
+  mutate(dep_delay = log10(dep_delay)) %>%
+  dbplot_histogram(dep_delay)
+```
+
+
+#### Raster
+
+```{r}
+db_flights %>%
+  filter(dep_delay > 15 & arr_delay > 15) %>%
+  mutate(arr_delay = log10(arr_delay),
+         dep_delay = log10(dep_delay)) %>%
+  dbplot_raster(dep_delay, arr_delay)
+```
+
+
+## tidypredict
+
+`tidypredict` uses the same principal as `dbplot`.  It reads a given R model object, and builds a `tidyeval` formula that takes place of the `predict()` function. `dbplyr` can then take the formula, and turn it into a SQL command. This let's us run predictions inside the database.  It supports `randomForest()`, `lm()`, and `glm()` models.  The dev version adds support for `earth()` functions.  The `ranger()` models are supported but there's a bug I'm working on, so hold of for now.  We are also looking at adding support for `cubist()` models.
+
+http://tidypredict.netlify.com/
+
+### Model
+
+```{r}
+local_sample <- db_joined %>%
+  head(10000) %>%
+  collect() 
+
+# More on sampling, here: https://github.com/rstudio/webinars/blob/master/53-databases-R/databases-and-R.Rmd#sampling
+
+local_tidy <- local_sample %>% 
+  filter(!is.na(arr_delay)) %>%
+  mutate(delayed  = as.integer(arr_delay > 15)) %>%
+  select(delayed, dep_delay, dep_time, distance) 
+
+model <- glm(delayed ~ dep_time + distance, data = local_tidy, family = "binomial")
+
+summary(model)
+```
+
+### Predict
+
+Use `tidypredict_fit()` to see the unevaluated `tidyeval` formula that runs the preductions
+
+```{r}
+library(tidypredict)
+
+tidypredict_fit(model)
+```
+
+
+To see the resulting SQL, use `tidypredict_sql()`.  It will need to know the database connection so it can translate to the proper SQL syntax.
+
+```{r}
+tidypredict_sql(model, con = con)
+```
+
+`tidypredict_to_column()` will create a new variable that contains the predictions.  Only the model is required as an argument, the connection is infered from the table passed to the function.
+
+```{r}
+local_tidy %>%
+  tidypredict_to_column(model)
+```
+
+### Validate
+
+A comparison of both prediction functions against the local data frame
+
+```{r}
+local_tidy %>%
+  tidypredict_to_column(model) %>%
+  mutate(from_glm = predict(model, type = "response"))
+```
+
+There is a testing function to make it easier to confirm that 
+
+```{r}
+tidypredict_test(model)
+```
+
+### Confusion matrix
+
+The following operations compares the model predictions against all records.  For techniques for writing back to the database, please see this article: http://tidypredict.netlify.com/articles/sql/
+
+```{r}
+db_flights %>%
+  filter(!is.na(arr_delay)) %>%
+  mutate(delayed = ifelse(arr_delay > 15, 1, 0)) %>%
+  select(delayed, dep_time, distance) %>%
+  tidypredict_to_column(model) %>%
+  mutate(fit = ifelse(fit > 0.3, 1, 0)) %>%
+  group_by(delayed, fit) %>%
+  tally()
+```
+
+### Save model
+
+`tidypredict` splits the model parsing from the formula building.  The idea is that other linear regression models can just match to the the parsed model spec, and `tidypredict` can still use the same routine to create the formula.
+
+
+```{r}
+parse_model(model)
+```
+
+Another reason for a separate parsed model, is that it can be saved as a human readeable, csv file.
+
+```{r}
+readr::write_csv(parse_model(model), "my_model.csv")
+```
+

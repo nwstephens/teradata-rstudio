@@ -18,7 +18,7 @@
 
 #### Resources
 
-* [Teradata handout](http://colorado.rstudio.com/rsc/content/730/teradata-handout.pdf)
+* [Teradata handout](http://colorado.rstudio.com/rsc/content/1570/teradata-handout.pdf)
 * [Database queries with R](https://rviews.rstudio.com/2017/10/18/database-queries-with-r/)
 * [Announcing RStudio Professional Drivers product page](https://blog.rstudio.com/2017/10/16/announcing-rstudio-professional-drivers/)
 * [RStudio Professional Drivers](https://www.rstudio.com/products/drivers/) 

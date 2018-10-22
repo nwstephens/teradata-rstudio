@@ -9,14 +9,12 @@ output:
     pandoc_args:
     - -V
     - classoption=twocolumn
-resource_files:
-- rstudio.png
 geometry: margin=0.6in
 ---
 
 \pagenumbering{gobble}
 
-# WHAT'S NEW!
+# WHAT'S NEW
 
 #### 1. Improved R Packages
 
@@ -26,10 +24,9 @@ Improvements to open source R packages make it easy to work with your databases.
 
 ```{r, eval=FALSE}
 install.packages("DBI")
+install.packages("odbc")
 install.packages("dplyr")
-install.packages("devtools")
-devtools::install_github("rstats-db/odbc")
-devtools::install_github("tidyverse/dbplyr")
+install.packages("dbplyr")
 ```
 
 #### 2. RStudio v1.1 New Features
@@ -102,7 +99,7 @@ dbExecute(con, "create table newtable
 
 #### 3. Translate R Code into SQL
 
-Use `dplyr` to translate your code into specific SQL variants. You can use the same R code for R objects as you use for databases.
+Use `dplyr` to translate code into specific SQL variants. Use the same code for R objects and for databases.
 
 ```{r, eval=FALSE}
 tbl(con, "mytable") %>% select("col1") %>% 
